@@ -2,8 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>MRZ099W Real Emulator v2.6</title>
-    <!-- メタデータ取得用ライブラリ -->
+    <title>AVIC-MRZ099W HTML</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
     <style>
         body { background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; overflow: hidden; font-family: sans-serif; }
@@ -12,6 +11,10 @@
         .active { display: block; }
         #body-layer { position: absolute; width: 100%; height: 100%; pointer-events: none; z-index: 1000; }
         .touch-area { position: absolute; cursor: pointer; z-index: 1100; }
+        
+        /* オープニングレイヤー */
+        #sc-opening { position: absolute; width: 100%; height: 100%; background-image: url('opening.png'); background-size: 100% 100%; z-index: 900; display: none; }
+        #sc-opening.active { display: block; }
         
         /* テキスト情報レイヤー */
         #info-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 500; pointer-events: none; color: #fff; display: none; }
@@ -34,14 +37,15 @@
 <body>
 
 <div id="wrapper">
-    <div id="sc-map" class="screen active" style="background-image: url('map.png');"></div>
+    <div id="sc-opening" class="active"></div>
+
+    <div id="sc-map" class="screen" style="background-image: url('map.png');"></div>
     <div id="sc-menu" class="screen" style="background-image: url('menu.png');"></div>
     <div id="sc-av" class="screen" style="background-image: url('AV.png');"></div>
     <div id="sc-audio" class="screen" style="background-image: url('audio.png');"></div>
     
-    <!-- 情報表示用 -->
     <div id="info-layer">
-        <div id="d-title">フォルダを選択してください</div>
+        <div id="d-title">OPENから曲フォルダを選択</div>
         <div id="d-artist">Unknown Artist</div>
         <div id="d-album">Unknown Album</div>
         <div id="seekbar-container"><div id="seekbar-fill"></div></div>
@@ -93,8 +97,13 @@ function playSound(file) {
 
 function switchScreen(id) {
     currentScreen = id;
+    // 全画面からactiveを除去（オープニングも含む）
+    document.getElementById('sc-opening').classList.remove('active');
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    document.getElementById('sc-' + id).classList.add('active');
+    
+    const target = document.getElementById('sc-' + id);
+    if(target) target.classList.add('active');
+    
     document.getElementById('info-layer').className = (id === 'audio') ? 'show' : '';
     
     document.querySelectorAll('.touch-area').forEach(area => {
@@ -108,7 +117,6 @@ function loadTrack(index) {
     const file = playlist[index];
     audioPlayer.src = URL.createObjectURL(file);
     
-    // ライブラリを使用してメタデータを取得
     jsmediatags.read(file, {
         onSuccess: function(tag) {
             const tags = tag.tags;
@@ -117,7 +125,6 @@ function loadTrack(index) {
             document.getElementById('d-album').innerText = tags.album || "Unknown Album";
         },
         onError: function(error) {
-            // 取得失敗時はファイル名から推測
             const fileName = file.name.replace(/\.[^/.]+$/, "");
             document.getElementById('d-title').innerText = fileName;
             if(fileName.includes(" - ")) {
@@ -184,7 +191,11 @@ Object.keys(MASTER_DATA.elements).forEach(key => {
     container.appendChild(div);
 });
 
-switchScreen('map');
+// 起動処理: オープニングを表示し、7秒後にmapへ
+setTimeout(() => {
+    switchScreen('map');
+}, 7000);
+
 document.getElementById('wrapper').onclick = () => playSound("none.mp3");
 </script>
 </body>

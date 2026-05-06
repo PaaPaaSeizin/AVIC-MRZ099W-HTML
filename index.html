@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>MRZ099W Real Emulator v2.6</title>
+    <!-- メタデータ取得用ライブラリ -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+    <style>
+        body { background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; overflow: hidden; font-family: sans-serif; }
+        #wrapper { position: relative; width: 1024px; height: 600px; background: #000; user-select: none; }
+        .screen { position: absolute; width: 100%; height: 100%; display: none; background-size: 100% 100%; }
+        .active { display: block; }
+        #body-layer { position: absolute; width: 100%; height: 100%; pointer-events: none; z-index: 1000; }
+        .touch-area { position: absolute; cursor: pointer; z-index: 1100; }
+        
+        /* テキスト情報レイヤー */
+        #info-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 500; pointer-events: none; color: #fff; display: none; }
+        #info-layer.show { display: block; }
+        
+        /* 指定された最終座標セット */
+        #d-title { position: absolute; left: 98px; top: 159px; width: 426px; height: 34px; font-size: 23px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; }
+        #d-album { position: absolute; left: 98px; top: 290px; width: 400px; height: 30px; font-size: 21px; color: #ccc; display: flex; align-items: center; }
+        #d-artist { position: absolute; left: 98px; top: 225px; width: 400px; height: 30px; font-size: 21px; color: #ccc; display: flex; align-items: center; }
+        
+        .time-disp { position: absolute; font-size: 18px; color: #ffff00; font-family: monospace; display: flex; align-items: center; }
+        #d-time { left: 90px; top: 387px; width: 63px; height: 18px; }
+        #d-total { left: 396px; top: 385px; width: 63px; height: 18px; }
+
+        /* シークバー */
+        #seekbar-container { position: absolute; left: 69px; top: 372px; width: 399px; height: 8px; background: #000; overflow: hidden; }
+        #seekbar-fill { width: 0%; height: 100%; background: #ffff00; transition: width 0.1s linear; }
+    </style>
+</head>
+<body>
+
+<div id="wrapper">
+    <div id="sc-map" class="screen active" style="background-image: url('map.png');"></div>
+    <div id="sc-menu" class="screen" style="background-image: url('menu.png');"></div>
+    <div id="sc-av" class="screen" style="background-image: url('AV.png');"></div>
+    <div id="sc-audio" class="screen" style="background-image: url('audio.png');"></div>
+    
+    <!-- 情報表示用 -->
+    <div id="info-layer">
+        <div id="d-title">フォルダを選択してください</div>
+        <div id="d-artist">Unknown Artist</div>
+        <div id="d-album">Unknown Album</div>
+        <div id="seekbar-container"><div id="seekbar-fill"></div></div>
+        <div id="d-time" class="time-disp">00' 00"</div>
+        <div id="d-total" class="time-disp">00' 00"</div>
+    </div>
+
+    <img src="body.png" id="body-layer">
+    <div id="interaction-layer"></div>
+    <input type="file" id="folder-input" webkitdirectory directory multiple style="display:none">
+</div>
+
+<script>
+const MASTER_DATA = {
+    "elements": {
+        "b_navi": { "x": 900, "y": 40, "w": 100, "h": 70, "img": "body.png", "sfx": "ok.mp3" },
+        "b_menu": { "x": 900, "y": 125, "w": 100, "h": 80, "img": "body.png", "sfx": "menu.mp3" },
+        "b_av": { "x": 900, "y": 355, "w": 100, "h": 90, "img": "body.png", "sfx": "ok.mp3" },
+        "b_vol": { "x": 895, "y": 235, "w": 110, "h": 110, "img": "body.png", "sfx": "ok.mp3" },
+        "b_open": { "x": 900, "y": 465, "w": 100, "h": 65, "img": "body.png", "sfx": "ok.mp3" },
+        "m_av": { "x": 82, "y": 209, "w": 95, "h": 96, "img": "menu.png", "sfx": "ok.mp3" },
+        "m_close": { "x": 748, "y": 62, "w": 77, "h": 73, "img": "menu.png", "sfx": "back.mp3" },
+        "a_navi": { "x": 707, "y": 215, "w": 95, "h": 93, "img": "AV.png", "sfx": "menu.mp3" },
+        "a_back": { "x": 745, "y": 62, "w": 80, "h": 79, "img": "AV.png", "sfx": "back.mp3" },
+        "a_sd": { "x": 249, "y": 119, "w": 140, "h": 100, "img": "AV.png", "sfx": "ok.mp3" },
+        "p_prev": { "x": 572, "y": 273, "w": 80, "h": 67, "img": "audio.png", "sfx": "down.mp3" },
+        "p_play": { "x": 660, "y": 275, "w": 77, "h": 67, "img": "audio.png", "sfx": "ok.mp3" },
+        "p_next": { "x": 745, "y": 280, "w": 80, "h": 55, "img": "audio.png", "sfx": "up.mp3" }
+    }
+};
+
+let currentScreen = 'map';
+let playlist = [];
+let currentIndex = 0;
+const audioPlayer = new Audio();
+const jsmediatags = window.jsmediatags;
+
+function formatTime(seconds) {
+    if (isNaN(seconds)) return "00' 00\"";
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${String(m).padStart(2, '0')}' ${String(s).padStart(2, '0')}"`;
+}
+
+function playSound(file) {
+    if(!file || file === "none.mp3") return;
+    new Audio(file).play().catch(() => {});
+}
+
+function switchScreen(id) {
+    currentScreen = id;
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById('sc-' + id).classList.add('active');
+    document.getElementById('info-layer').className = (id === 'audio') ? 'show' : '';
+    
+    document.querySelectorAll('.touch-area').forEach(area => {
+        const belongsTo = area.dataset.img;
+        area.style.pointerEvents = (belongsTo === "body.png" || belongsTo === (id + ".png") || (id === "audio" && belongsTo === "audio.png")) ? "auto" : "none";
+    });
+}
+
+function loadTrack(index) {
+    if (playlist.length === 0) return;
+    const file = playlist[index];
+    audioPlayer.src = URL.createObjectURL(file);
+    
+    // ライブラリを使用してメタデータを取得
+    jsmediatags.read(file, {
+        onSuccess: function(tag) {
+            const tags = tag.tags;
+            document.getElementById('d-title').innerText = tags.title || file.name.replace(/\.[^/.]+$/, "");
+            document.getElementById('d-artist').innerText = tags.artist || "Unknown Artist";
+            document.getElementById('d-album').innerText = tags.album || "Unknown Album";
+        },
+        onError: function(error) {
+            // 取得失敗時はファイル名から推測
+            const fileName = file.name.replace(/\.[^/.]+$/, "");
+            document.getElementById('d-title').innerText = fileName;
+            if(fileName.includes(" - ")) {
+                const parts = fileName.split(" - ");
+                document.getElementById('d-artist').innerText = parts[0];
+                document.getElementById('d-album').innerText = "SD Album";
+            } else {
+                document.getElementById('d-artist').innerText = "Unknown Artist";
+                document.getElementById('d-album').innerText = "Unknown Album";
+            }
+        }
+    });
+
+    audioPlayer.play();
+}
+
+const actions = {
+    "b_navi": () => switchScreen('map'),
+    "b_menu": () => switchScreen('menu'),
+    "b_av":   () => (currentScreen === 'audio') ? switchScreen('av') : switchScreen('audio'),
+    "b_open": () => document.getElementById('folder-input').click(),
+    "m_av":    () => switchScreen('av'),
+    "m_close": () => switchScreen('map'),
+    "a_navi":  () => switchScreen('menu'),
+    "a_back":  () => switchScreen('map'),
+    "a_sd":    () => switchScreen('audio'),
+    "p_play":  () => audioPlayer.paused ? audioPlayer.play() : audioPlayer.pause(),
+    "p_next":  () => { currentIndex = (currentIndex + 1) % playlist.length; loadTrack(currentIndex); },
+    "p_prev":  () => { currentIndex = (currentIndex - 1 + playlist.length) % playlist.length; loadTrack(currentIndex); }
+};
+
+document.getElementById('folder-input').onchange = (e) => {
+    playlist = Array.from(e.target.files).filter(f => f.type.startsWith('audio/'));
+    if (playlist.length > 0) {
+        currentIndex = 0;
+        switchScreen('audio');
+        loadTrack(currentIndex);
+    }
+};
+
+audioPlayer.ontimeupdate = () => {
+    document.getElementById('d-time').innerText = formatTime(audioPlayer.currentTime);
+    document.getElementById('d-total').innerText = formatTime(audioPlayer.duration);
+    if (audioPlayer.duration > 0) {
+        const progress = (audioPlayer.currentTime / audioPlayer.duration) * 100;
+        document.getElementById('seekbar-fill').style.width = progress + "%";
+    }
+};
+
+audioPlayer.onended = () => actions.p_next();
+
+const container = document.getElementById('interaction-layer');
+Object.keys(MASTER_DATA.elements).forEach(key => {
+    const data = MASTER_DATA.elements[key];
+    const div = document.createElement('div');
+    div.className = 'touch-area';
+    div.dataset.img = data.img;
+    div.style.cssText = `left:${data.x}px; top:${data.y}px; width:${data.w}px; height:${data.h}px;`;
+    div.onclick = (e) => {
+        e.stopPropagation();
+        playSound(data.sfx);
+        if(actions[key]) actions[key]();
+    };
+    container.appendChild(div);
+});
+
+switchScreen('map');
+document.getElementById('wrapper').onclick = () => playSound("none.mp3");
+</script>
+</body>
+</html>
